@@ -1,0 +1,62 @@
+#!/bin/bash
+
+##
+## Author : Ahfyth
+## Contact: sunkun@cuhk.edu.hk
+## Date   : Jan 18, 2019
+##
+## This program is designed to analyze the plasma DNA fragmentation pattern in tissue-specific
+## open chromatin regions for infering the tissue origin of cfDNA, which information could be
+## valuable in predicting the tumor origin after a positive cancer testing
+##
+## Note: this program only works for Paired-end sequencing data
+## OCF: Orientation-aware CfDNA Fragmentation
+##
+## Please cite the following paper if you use this program in your work:
+## Sun et al. Orientation-aware plasma cell-free DNA fragmentation analysis in open chromatin
+## regions informs tissue of origin. Genome Res 2019.
+##
+
+set -o nounset
+set -o errexit
+
+if [ ! -s "data.list" ]
+then
+	echo
+	echo "ERROR: 'data.list' file not found under the current directory." >/dev/stderr
+	echo "Please refer to README and LICENSE file for more information."  >/dev/stderr
+	echo
+	exit 2
+fi
+
+prg=`dirname $0`
+code=AllOC
+
+while read sid extra
+do
+	echo Processing: $sid
+
+	if [ ${sid:0:1} == "#" ]
+	then
+		continue
+	fi
+
+	for bed in `ls $sid.*bed`	## this allows $sid.srt.bed and multiple lanes like $sid.lane1.bed, $sid.lane2.bed
+	do
+		$prg/bedtools intersect -a $prg/all.OC.bed -b $bed -wo -sorted
+	done >$code.ol.$sid
+
+	perl $prg/sync.pl     $code.ol.$sid $sid.vs.$code &
+	perl $prg/sync.end.pl $code.ol.$sid $sid.vs.$code &
+	wait
+	R --slave --args $sid $sid <$prg/plot.sync.end.R
+
+	for T in Tcell Placenta Liver Lung Ovary Breast Intestine
+	do
+		perl $prg/quant.pl $sid.vs.$code.$T.sync.end >>$T.OCF
+	done
+done <data.list
+
+echo -e "#Sid\tTcell\tLiver\tPlacenta\tLung\tOvary\tBreast\tIntestine" > All.OCF
+paste Tcell.OCF Liver.OCF Placenta.OCF Lung.OCF Ovary.OCF Breast.OCF Intestine.OCF | cut -f 1,2,4,6,8,10,12,14 | perl -ne 's/\.vs\S+//; print' >> All.OCF
+
